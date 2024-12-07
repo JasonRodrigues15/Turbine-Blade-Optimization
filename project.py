@@ -18,8 +18,8 @@ def bem_solver(c, beta, r, V_inf, Omega, rho, B, R, dr):
     # Initialize induction factors
     a = 0.0
     a_prime = 0.0
-    max_iterations = 200
-    tolerance = 1e-3
+    max_iterations = 1000
+    tolerance = 1e-2
 
     def compute_a_and_a_prime(a, a_prime, c, beta, r, V_inf, Omega, B, R):
         # Flow angle
@@ -57,6 +57,7 @@ def bem_solver(c, beta, r, V_inf, Omega, rho, B, R, dr):
 
     for _ in range(max_iterations):
         a_new, a_prime_new, _ = compute_a_and_a_prime(a, a_prime, c, beta, r, V_inf, Omega, B, R)
+        # print(f"a = {a_new}, a' = {a_prime_new}")
         
         if abs(a - a_new) < tolerance and abs(a_prime - a_prime_new) < tolerance:
             a = a_new
@@ -74,6 +75,7 @@ def bem_solver(c, beta, r, V_inf, Omega, rho, B, R, dr):
     # Calculate torque and thrust
     dQ = 0.5 * rho * V_rel**2 * c * B * (C_L * np.sin(phi) - C_D * np.cos(phi)) * r * dr
     dT = 0.5 * rho * V_rel**2 * c * B * (C_L * np.cos(phi) + C_D * np.sin(phi)) * dr
+    print(f"dQ = {dQ}, dT = {dT}")
     return dQ, dT, V_rel
 
 # def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
@@ -108,10 +110,12 @@ def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
         T += dT
         C_limit = 0.178 * np.exp(-3.083*(r[i]-0.109)) + 0.049
         beta_limit = 3.412 * np.exp(-3.514*(r[i]-0.615)) - 5.883
-        cons.append(0.2 - abs(c[i] - C_limit))
-        cons.append(np.radians(7.5) - abs(beta[i] - np.radians(beta_limit)))
-    cons.append(Q_max - Q) # torque constraint on rotor
-    cons.append(T_max - T) # thrust constraint on rotor
+        # cons.append(0.2 - abs(c[i] - C_limit))
+        # cons.append(np.radians(10) - abs(beta[i] - np.radians(beta_limit)))
+    # cons.append(Q_max - Q) # torque constraint on rotor
+    # cons.append(Q) # make Q greater than 0
+    # cons.append(T_max - T) # thrust constraint on rotor
+    print("Constraints:", cons)
     return np.array(cons)
 
 
@@ -138,10 +142,11 @@ def objective_function(x, r, V_inf, Omega, rho, B, R, dr):
     for i in range(len(r)):
         dQ, _, _ = bem_solver(c[i], beta[i], r[i], V_inf, Omega, rho, B, R, dr)
         Q += dQ
-        cost = 5 * c[i] + beta[i]
-        total_cost += cost
+        # cost = 5 * c[i] + beta[i]
+        # total_cost += cost
     P = Omega * Q
-    objective = total_cost / (8700 * P * np.exp(-V_inf**2))
+    # print(f"Q_opt = {Q}")
+    objective = 1 / (8700 * P * np.exp(-V_inf**2))
     return objective
 
 # def optimize_blade_element(r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
@@ -179,34 +184,57 @@ def objective_function(x, r, V_inf, Omega, rho, B, R, dr):
 
 def run_optimization():
     # Parameters
-    V_inf = 5.0    # Wind speed [m/s]
-    Omega = 30.0    # Angular velocity [rad/s]
+    V_inf = 15.0    # Wind speed [m/s]
+    Omega = 1.57    # Angular velocity [rad/s]
     rho = 1.225     # Air density [kg/m³]
     B = 3           # Number of blades
     R = 1.4       # Blade radius [m]
-    Q_max = 1000.0  # Maximum torque [Nm]
-    T_max = 2000.0  # Maximum thrust [N]
+    Q_max = 100000.0  # Maximum torque [Nm]
+    T_max = 100000.0  # Maximum thrust [N]
 
     # Radial positions
-    r = np.linspace(0.2, R, 20)
+    r = np.linspace(0.2, R, 5)
     dr = r[1] - r[0]
 
     num_radii = len(r)
     c0 = 0.178 * np.exp(-3.083*(r-0.109)) + 0.049
     beta0 = np.radians(3.412 * np.exp(-3.514*(r-0.615)) - 5.883)
+    # c0 = np.zeros(r.shape[0]) + 0.1
+    # print(c0.shape)
+    # beta0 = np.zeros(r.shape[0]) + 0.1
     x0 = np.column_stack((c0, beta0)).flatten()  # Flatten into 1D
 
     result = minimize(
         objective_function,
         x0,
         args=(r, V_inf, Omega, rho, B, R, dr),
-        method='SLSQP',
-        bounds=[(1e-6, 0.4), (np.radians(-20), np.radians(20))] * num_radii,
-        constraints=[
-            {'type': 'ineq', 'fun': lambda x: constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr)}
-        ]
+        method='Nelder-Mead',
+        # bounds=[(1e-6, 0.4), (np.radians(-20), np.radians(20))] * num_radii,
+        # constraints=[
+        #     {'type': 'ineq', 'fun': lambda x: constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr)}
+        # ]
     )
-    return result.x, r, R
+    return result, r, R
+
+
+# x0_test = np.array([0.1, 0.1, 0.1, 0.1])
+# # Parameters
+# V_inf = 15.0    # Wind speed [m/s]
+# Omega = 1.57    # Angular velocity [rad/s]
+# rho = 1.225     # Air density [kg/m³]
+# B = 3           # Number of blades
+# R = 1.4       # Blade radius [m]
+# Q_max = 200.0  # Maximum torque [Nm]
+# T_max = 200.0  # Maximum thrust [N]
+
+# # Radial positions
+# r = np.linspace(0.2, R, 2)
+# dr = r[1] - r[0]
+# print("Initial constraints check:", constraint_functions(
+#     x0_test, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr
+# ))
+
+# raise RuntimeError("End")
 
 # Initialize interpolation functions
 # cl_interp, cd_interp = load_airfoil_data()
@@ -230,13 +258,17 @@ def run_optimization():
 #     result = optimize_blade_element(r_i, V_inf, Omega, rho, B, R, Q_max, T_max, dr)
 #     results.append(result)
 
-x_opt, r, R = run_optimization()
+opt_result, r, R = run_optimization()
+x_opt = opt_result.x
 
 print(x_opt.shape)
+print(opt_result.success)
+print(opt_result.message)
 
 x_reshaped = x_opt.reshape(-1, 2)  # Reshape to (num_radii, 2)
 c = x_reshaped[:, 0]
-beta = x_reshaped[:, 1]
+# change to deg
+beta = np.degrees(x_reshaped[:, 1])
 
 # Plot results
 # results = np.array(results)
