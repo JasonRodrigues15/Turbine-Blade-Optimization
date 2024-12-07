@@ -14,13 +14,13 @@ def load_airfoil_data(alpha):
     cd = df.loc[nearest_idx, 'Cd']
     return cl, cd
 
-def bem_solver(c, beta, r, V_inf, Omega, rho, B, R):
+def bem_solver(c, beta, r, V_inf, Omega, rho, B, R, dr):
     # Initialize induction factors
     a = 0.0
     a_prime = 0.0
     max_iterations = 100
     tolerance = 1e-6
-    dr = 1e-3
+    # dr = 1e-3
 
     def compute_a_and_a_prime(a, a_prime, c, beta, r, V_inf, Omega, B, R):
         # Flow angle
@@ -77,28 +77,28 @@ def bem_solver(c, beta, r, V_inf, Omega, rho, B, R):
     dT = 0.5 * rho * V_rel**2 * c * B * (C_L * np.cos(phi) + C_D * np.sin(phi)) * dr
     return dQ, dT, V_rel
 
-def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max):
+def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
     c, beta = x
     # print(f"Beta: {round(beta, 6)}")
-    dQ, dT, _ = bem_solver(c, beta, r, V_inf, Omega, rho, B, R)
+    dQ, dT, _ = bem_solver(c, beta, r, V_inf, Omega, rho, B, R, dr)
     C_limit = 0.178 * np.exp(-3.083*(r-0.109)) + 0.049
     beta_limit = 3.412 * np.exp(-3.514*(r-0.615)) - 5.883
     
     return [
-        abs(c - C_limit),        # Increased margin from limit curve
-        abs(beta - np.radians(beta_limit)),  # Wider angle range
-        0.24 - c,                       # Maximum chord
-        c,                      # Minimum chord
-        np.radians(20) - beta,
-        beta, 
+        0.1 - abs(c - C_limit),        # Increased margin from limit curve
+        np.radians(7.5) - abs(beta - np.radians(beta_limit)),  # Wider angle range
+        # 0.24 - c,                       # Maximum chord -> added in bounds below
+        # c,                      # Minimum chord -> also added below in bounds
+        # np.radians(20) - beta, -> added in bounds below
+        # beta, 
         dQ - 0.1 * Q_max,             # Minimum torque
         T_max - dT,                    # Maximum thrust
         dT - 0.1 * T_max              # Minimum thrust
     ]
 
-def objective_function(x, r, V_inf, Omega, rho, B, R):
+def objective_function(x, r, V_inf, Omega, rho, B, R, dr):
     c, beta = x
-    dQ, _, _ = bem_solver(c, beta, r, V_inf, Omega, rho, B, R)
+    dQ, _, _ = bem_solver(c, beta, r, V_inf, Omega, rho, B, R, dr)
     # print(f"C = {c}, beta = {beta}")
     
     # #Riemann summ to integrate
@@ -110,7 +110,7 @@ def objective_function(x, r, V_inf, Omega, rho, B, R):
     
     return cost / (8700 * P * np.exp(-V_inf**2))
 
-def optimize_blade_element(r, V_inf, Omega, rho, B, R, Q_max, T_max):
+def optimize_blade_element(r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
     # Initial guess based on limit functions
     # CL_design = 1
     # c0 = (8 * np.pi * r) / (B * CL_design)
@@ -129,12 +129,12 @@ def optimize_blade_element(r, V_inf, Omega, rho, B, R, Q_max, T_max):
     bounds = [(1e-6, 0.4), (np.radians(-20), np.radians(20))]
     
     # Constraints
-    cons = [{'type': 'ineq', 'fun': lambda x: constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max)[i]} 
-            for i in range(9)]
+    cons = [{'type': 'ineq', 'fun': lambda x: constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr)[i]} 
+            for i in range(5)]
     
     result = minimize(objective_function, 
                      x0,
-                     args=(r, V_inf, Omega, rho, B, R),
+                     args=(r, V_inf, Omega, rho, B, R, dr),
                      method='SLSQP',
                      bounds=bounds,
                      constraints=cons,
@@ -156,11 +156,12 @@ T_max = 2000.0  # Maximum thrust [N]
 
 # Radial positions
 r = np.linspace(0.2, R, 20)
+dr = r[1] - r[0]
 
 # Optimize for each radius
 results = []
 for r_i in r:
-    result = optimize_blade_element(r_i, V_inf, Omega, rho, B, R, Q_max, T_max)
+    result = optimize_blade_element(r_i, V_inf, Omega, rho, B, R, Q_max, T_max, dr)
     results.append(result)
 
 # Plot results
