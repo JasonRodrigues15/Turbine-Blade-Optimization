@@ -5,14 +5,6 @@ from scipy.optimize import minimize
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# def load_airfoil_data():
-#     df = pd.read_csv('airfoil_lookup.csv')
-#     cl_interp = interp1d(df['Alpha'], df['Cl'], bounds_error=False, 
-#                         fill_value=(df['Cl'].iloc[0], df['Cl'].iloc[-1]))
-#     cd_interp = interp1d(df['Alpha'], df['Cd'], bounds_error=False, 
-#                         fill_value=(df['Cd'].iloc[0], df['Cd'].iloc[-1]))
-#     return cl_interp, cd_interp
-
 df = pd.read_csv('airfoil_lookup.csv')
 
 def load_airfoil_data(alpha):
@@ -24,15 +16,17 @@ def load_airfoil_data(alpha):
 
 def bem_solver(c, beta, r, V_inf, Omega, rho, B, R):
     # Initialize induction factors
-    a = 0.3
+    a = 0.0
     a_prime = 0.0
     max_iterations = 100
-    tolerance = 1e-20  
-    for _ in range(max_iterations):
+    tolerance = 1e-6
+    dr = 1e-3
+
+    def compute_a_and_a_prime(a, a_prime, c, beta, r, V_inf, Omega, B, R):
         # Flow angle
         phi = np.arctan2(V_inf * (1 - a), Omega * r * (1 + a_prime))
         # print(phi)
-        print(a_prime)
+        # print(a_prime)
         # Relative velocity
         V_rel = np.sqrt(V_inf**2 * (1 - a)**2 + Omega**2 * r**2 * (1 + a_prime)**2)
         
@@ -42,6 +36,7 @@ def bem_solver(c, beta, r, V_inf, Omega, rho, B, R):
         # Get coefficients
         # print(alpha)
         C_L, C_D = load_airfoil_data(alpha)
+        # print(C_L, C_D)
         # Local solidity
         sigma = (B * c) / (2 * np.pi * r)
         
@@ -50,30 +45,42 @@ def bem_solver(c, beta, r, V_inf, Omega, rho, B, R):
         f = ((-B * (R - r + eps))/ (2 * r * np.sin(phi) + eps))
         exp_f = np.exp(f)
 
-        exp_f = min(exp_f, 1.0)
+        exp_f = min(exp_f, 1.0 - eps)
         F = (2/np.pi) * np.arccos(exp_f)
 
         # print(((C_L * np.cos(phi) + C_D * np.sin(phi))))
-        k_a = (4 * F * np.sin(phi)) / (sigma * (C_L * np.cos(phi) + C_D * np.sin(phi)))
+        k_a = (4 * F * np.sin(phi)**2) / (sigma * (C_L * np.cos(phi) + C_D * np.sin(phi)))
         a_new = 1 / (k_a + 1)
-        k_a_prime = 4 * F * np.sin(phi) * np.cos(phi) / (sigma * (C_L * np.sin(phi) - C_D * np.cos(phi)))
+        k_a_prime = (4 * F * np.sin(phi) * np.cos(phi)) / (sigma * (C_L * np.sin(phi) - C_D * np.cos(phi)))
         a_prime_new = 1 / (k_a_prime - 1)
+        other_ret_values = [V_rel, phi, C_L, C_D]
+        return a_new, a_prime_new, other_ret_values
+
+    for _ in range(max_iterations):
+        a_new, a_prime_new, _ = compute_a_and_a_prime(a, a_prime, c, beta, r, V_inf, Omega, B, R)
         
         if abs(a - a_new) < tolerance and abs(a_prime - a_prime_new) < tolerance:
+            a = a_new
+            a_prime = a_prime_new
+            # run one  more time to compute values for the converged a and a'
+            _, _, [V_rel, phi, C_L, C_D] = compute_a_and_a_prime(a, a_prime, c, beta, r, V_inf, Omega, B, R)
             break
 
         a = a_new
         a_prime = a_prime_new
-    # Calculate torque and thrust
-    dQ = 0.5 * rho * V_rel**2 * c * B * (C_L * np.sin(phi) - C_D * np.cos(phi)) * r
-    dT = 0.5 * rho * V_rel**2 * c * B * (C_L * np.cos(phi) + C_D * np.sin(phi)) * c
     
+    else:
+        raise RuntimeError("Max iterations exceeded for a and a' computation")
+
+    # Calculate torque and thrust
+    dQ = 0.5 * rho * V_rel**2 * c * B * (C_L * np.sin(phi) - C_D * np.cos(phi)) * r * dr
+    dT = 0.5 * rho * V_rel**2 * c * B * (C_L * np.cos(phi) + C_D * np.sin(phi)) * dr
     return dQ, dT, V_rel
 
 def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max):
     c, beta = x
+    # print(f"Beta: {round(beta, 6)}")
     dQ, dT, _ = bem_solver(c, beta, r, V_inf, Omega, rho, B, R)
-    
     C_limit = 0.178 * np.exp(-3.083*(r-0.109)) + 0.049
     beta_limit = 3.412 * np.exp(-3.514*(r-0.615)) - 5.883
     
@@ -92,6 +99,7 @@ def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max):
 def objective_function(x, r, V_inf, Omega, rho, B, R):
     c, beta = x
     dQ, _, _ = bem_solver(c, beta, r, V_inf, Omega, rho, B, R)
+    # print(f"C = {c}, beta = {beta}")
     
     # #Riemann summ to integrate
     # dr = r[1] - r[0]  # Radial step size
@@ -104,23 +112,25 @@ def objective_function(x, r, V_inf, Omega, rho, B, R):
 
 def optimize_blade_element(r, V_inf, Omega, rho, B, R, Q_max, T_max):
     # Initial guess based on limit functions
-    CL_design = 1
-    c0 = (8 * np.pi * r) / (B * CL_design)
+    # CL_design = 1
+    # c0 = (8 * np.pi * r) / (B * CL_design)
 
-    phi = np.arctan2(V_inf, Omega * r)  # Flow angle
-    alpha_opt = np.radians(6)  # Optimal angle of attack
-    beta0 = phi - alpha_opt
+    # phi = np.arctan2(V_inf, Omega * r)  # Flow angle
+    # alpha_opt = np.radians(6)  # Optimal angle of attack
+    # beta0 = phi - alpha_opt
 
-    c0 = 0.1
-    beta0 = 0
+    # c0 = 0.1
+    # beta0 = 0
+    c0 = 0.178 * np.exp(-3.083*(r-0.109)) + 0.049
+    beta0 = np.radians(3.412 * np.exp(-3.514*(r-0.615)) - 5.883)
     x0 = [c0, beta0]
     
     # Bounds
-    bounds = [(0.0, 0.4), (np.radians(-20), np.radians(20))]
+    bounds = [(1e-6, 0.4), (np.radians(-20), np.radians(20))]
     
     # Constraints
     cons = [{'type': 'ineq', 'fun': lambda x: constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max)[i]} 
-            for i in range(6)]
+            for i in range(9)]
     
     result = minimize(objective_function, 
                      x0,
