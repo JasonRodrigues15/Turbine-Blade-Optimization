@@ -18,7 +18,7 @@ def bem_solver(c, beta, r, V_inf, Omega, rho, B, R, dr):
     # Initialize induction factors
     a = 0.0
     a_prime = 0.0
-    max_iterations = 1500
+    max_iterations = 1000
     tolerance = 1e-3
 
     def compute_a_and_a_prime(a, a_prime, c, beta, r, V_inf, Omega, B, R):
@@ -91,9 +91,9 @@ def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
         Q += dQ
         T += dT
         C_limit = 0.178 * np.exp(-3.083*(r[i]-0.109)) + 0.049
-        beta_limit = 3.412 * np.exp(-3.514*(r[i]-0.615)) - 5.883
-        cons.append(0.05 - abs(c[i] - C_limit))
-        cons.append(np.radians(7.5) - abs(beta[i] - np.radians(beta_limit)))
+        beta_limit = 3.412 * np.exp(-3.514*(r[i]-0.615)) - 5.883 + 6
+        cons.append(0.15 - abs(c[i] - C_limit))
+        cons.append(np.radians(10) - abs(beta[i] - np.radians(beta_limit)))
     cons.append(Q_max - Q) # torque constraint on rotor
     # cons.append(Q) # make Q greater than 0
     cons.append(T_max - T) # thrust constraint on rotor
@@ -105,20 +105,11 @@ def objective_function(x, r, V_inf, Omega, rho, B, R, dr):
     x_reshaped = x.reshape(-1, 2)  # Reshape to (num_radii, 2)
     c = x_reshaped[:, 0]
     beta = x_reshaped[:, 1]
-    total_cost = 0.0
+    # total_cost = 0.0
     Q = 0
     for i in range(len(r)):
         dQ, _, _ = bem_solver(c[i], beta[i], r[i], V_inf, Omega, rho, B, R, dr)
         Q += dQ
-
-        material_cost_per_unit_length = 30 # $30/meter
-        chord_length_factor = 10 # $100/m 
-        twist_penalty_factor = 30 # $2/degree
-
-        cost_chord = material_cost_per_unit_length * c[i] * chord_length_factor
-        cost_twist = twist_penalty_factor * np.abs(np.degrees(beta[i]))
-
-        total_cost += cost_chord**2 + cost_twist
     P = Omega * Q
     # print(f"Q_opt = {Q}")
     # print(f"Total cost {total_cost}")
@@ -132,20 +123,20 @@ def run_optimization():
     Omega = 1.57    # Angular velocity [rad/s]
     rho = 1.225     # Air density [kg/m³]
     B = 3           # Number of blades
-    R = 1.4       # Blade radius [m]
-    Q_max = 100.0  # Maximum torque [Nm]
-    T_max = 100.0  # Maximum thrust [N]
+    R = 1.6     # Blade radius [m]
+    Q_max = 500.0  # Maximum torque [Nm]
+    T_max = 500.0  # Maximum thrust [N]
 
     # Radial positions
-    r = np.linspace(0.5, R, 20)
+    r = np.linspace(0.2, R, 10)
     dr = r[1] - r[0]
 
     num_radii = len(r)
     c0 = 0.178 * np.exp(-3.083*(r-0.109)) + 0.049
-    beta0 = np.radians(3.412 * np.exp(-3.514*(r-0.615)) - 5.883)
+    beta0 = np.radians(3.412 * np.exp(-3.514*(r-0.615)) - 5.883 + 6)
     # c0 = np.zeros(r.shape[0]) + 0.01
     # print(c0.shape)
-    # beta0 = np.zeros    (r.shape[0])
+    # beta0 = np.zeros(r.shape[0]) + np.pi/15
     x0 = np.column_stack((c0, beta0)).flatten()  # Flatten into 1D
 
     result = minimize(
@@ -153,7 +144,7 @@ def run_optimization():
         x0,
         args=(r, V_inf, Omega, rho, B, R, dr),
         method='trust-constr',
-        bounds=[(1e-6, 0.8), (np.radians(0), np.radians(20))] * num_radii,
+        bounds=[(1e-3, 0.4), (np.radians(0), np.radians(20))] * num_radii,
         constraints=[
             {'type': 'ineq', 'fun': lambda x: constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr)}
         ]
@@ -177,7 +168,7 @@ beta = np.degrees(x_reshaped[:, 1])
 # Reference curves
 r_ref = np.linspace(0.2, R, 20)
 C_limit = 0.178 * np.exp(-3.083*(r_ref-0.109)) + 0.049
-beta_limit = 3.412 * np.exp(-3.514*(r_ref-0.615)) - 5.883
+beta_limit = 3.412 * np.exp(-3.514*(r_ref-0.615)) - 5.883 + 6
 
 plt.figure(figsize=(12, 5))
 plt.subplot(1, 2, 1)
