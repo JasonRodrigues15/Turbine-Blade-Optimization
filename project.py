@@ -75,7 +75,7 @@ def bem_solver(c, beta, r, V_inf, Omega, rho, B, R, dr):
     # Calculate torque and thrust
     dQ = 0.5 * rho * V_rel**2 * c * B * (C_L * np.sin(phi) - C_D * np.cos(phi)) * r * dr
     dT = 0.5 * rho * V_rel**2 * c * B * (C_L * np.cos(phi) + C_D * np.sin(phi)) * dr
-    print(f"dQ = {dQ}, dT = {dT}")
+    # print(f"dQ = {dQ}, dT = {dT}")
     return dQ, dT, V_rel
 
 # def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
@@ -110,12 +110,12 @@ def constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
         T += dT
         C_limit = 0.178 * np.exp(-3.083*(r[i]-0.109)) + 0.049
         beta_limit = 3.412 * np.exp(-3.514*(r[i]-0.615)) - 5.883
-        # cons.append(0.2 - abs(c[i] - C_limit))
-        # cons.append(np.radians(10) - abs(beta[i] - np.radians(beta_limit)))
-    # cons.append(Q_max - Q) # torque constraint on rotor
+        cons.append(0.1 - abs(c[i] - C_limit))
+        cons.append(np.radians(7.5) - abs(beta[i] - np.radians(beta_limit)))
+    cons.append(Q_max - Q) # torque constraint on rotor
     # cons.append(Q) # make Q greater than 0
-    # cons.append(T_max - T) # thrust constraint on rotor
-    print("Constraints:", cons)
+    cons.append(T_max - T) # thrust constraint on rotor
+    # print("Constraints:", cons)
     return np.array(cons)
 
 
@@ -142,11 +142,19 @@ def objective_function(x, r, V_inf, Omega, rho, B, R, dr):
     for i in range(len(r)):
         dQ, _, _ = bem_solver(c[i], beta[i], r[i], V_inf, Omega, rho, B, R, dr)
         Q += dQ
-        # cost = 5 * c[i] + beta[i]
-        # total_cost += cost
+
+        material_cost_per_unit_length = 30 # $30/meter
+        chord_length_factor = 10 # $100/m 
+        twist_penalty_factor = 30 # $2/degree
+
+        cost_chord = material_cost_per_unit_length * c[i] * chord_length_factor
+        cost_twist = twist_penalty_factor * np.abs(np.degrees(beta[i]))
+
+        total_cost += cost_chord**2 + cost_twist
     P = Omega * Q
     # print(f"Q_opt = {Q}")
-    objective = 1 / (8700 * P * np.exp(-V_inf**2))
+    print(f"Total cost {total_cost}")
+    objective = -P* 8700 * np.exp(-(V_inf/60)**2)  # 8700 * np.exp(-(V_inf / 80 )**2)
     return objective
 
 # def optimize_blade_element(r, V_inf, Omega, rho, B, R, Q_max, T_max, dr):
@@ -189,30 +197,30 @@ def run_optimization():
     rho = 1.225     # Air density [kg/m³]
     B = 3           # Number of blades
     R = 1.4       # Blade radius [m]
-    Q_max = 100000.0  # Maximum torque [Nm]
-    T_max = 100000.0  # Maximum thrust [N]
+    Q_max = 1000.0  # Maximum torque [Nm]
+    T_max = 1000.0  # Maximum thrust [N]
 
     # Radial positions
-    r = np.linspace(0.2, R, 5)
+    r = np.linspace(0.2, R, 20)
     dr = r[1] - r[0]
 
     num_radii = len(r)
-    c0 = 0.178 * np.exp(-3.083*(r-0.109)) + 0.049
-    beta0 = np.radians(3.412 * np.exp(-3.514*(r-0.615)) - 5.883)
-    # c0 = np.zeros(r.shape[0]) + 0.1
+    # c0 = 0.178 * np.exp(-3.083*(r-0.109)) + 0.049
+    # beta0 = np.radians(3.412 * np.exp(-3.514*(r-0.615)) - 5.883)
+    c0 = np.zeros(r.shape[0]) + 0.2
     # print(c0.shape)
-    # beta0 = np.zeros(r.shape[0]) + 0.1
+    beta0 = np.zeros    (r.shape[0])
     x0 = np.column_stack((c0, beta0)).flatten()  # Flatten into 1D
 
     result = minimize(
         objective_function,
         x0,
         args=(r, V_inf, Omega, rho, B, R, dr),
-        method='Nelder-Mead',
-        # bounds=[(1e-6, 0.4), (np.radians(-20), np.radians(20))] * num_radii,
-        # constraints=[
-        #     {'type': 'ineq', 'fun': lambda x: constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr)}
-        # ]
+        method='trust-constr',
+        bounds=[(1e-6, 0.6), (np.radians(-20), np.radians(20))] * num_radii,
+        constraints=[
+            {'type': 'ineq', 'fun': lambda x: constraint_functions(x, r, V_inf, Omega, rho, B, R, Q_max, T_max, dr)}
+        ]
     )
     return result, r, R
 
@@ -264,6 +272,7 @@ x_opt = opt_result.x
 print(x_opt.shape)
 print(opt_result.success)
 print(opt_result.message)
+print(opt_result.fun)
 
 x_reshaped = x_opt.reshape(-1, 2)  # Reshape to (num_radii, 2)
 c = x_reshaped[:, 0]
