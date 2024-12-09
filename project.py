@@ -3,7 +3,7 @@ from scipy.optimize import minimize
 import pandas as pd
 import matplotlib.pyplot as plt
 
-df = pd.read_csv('airfoil_lookup.csv')
+df = pd.read_csv('xf-n0012-il-200000.csv')
 
 # Retrieve Cl and Cd from airfoil lookup table for a given angle of attack.
 def load_airfoil_data(alpha):
@@ -113,7 +113,7 @@ def objective_function(x, r, V_inf, Omega, rho, B, R, dr):
 # Runs optimization on desired method_type
 def run_optimization(method_type):
     # Parameters
-    V_inf = 10.0    # Wind speed [m/s]
+    V_inf = 4    # Wind speed [m/s]
     Omega = 1.57    # Angular velocity [rad/s]
     rho = 1.225     # Air density [kg/m³]
     B = 3           # Number of blades
